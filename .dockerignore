@@ -1,0 +1,18 @@
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+.git
+.gitignore
+.vscode
+.idea
+
+# Archivos que NO quieres en la imagen
+FastApiLLM.py
+FlaskLLM.py
+env2.txt
+requirementsflask.txt
+archivo.txt

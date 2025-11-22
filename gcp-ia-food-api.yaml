@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ia-food-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ia-food-api
+  template:
+    metadata:
+      labels:
+        app: ia-food-api
+    spec:
+      containers:
+        - name: ia-food-api
+          image: alexanderchavezcabana/ia-food-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nutriapp-secrets
+                  key: GOOGLE_API_KEY
+            - name: GEMINI_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: nutriapp-secrets
+                  key: GEMINI_MODEL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ia-food-api-lb
+spec:
+  type: LoadBalancer
+  selector:
+    app: ia-food-api
+  ports:
+    - port: 8000
+      targetPort: 8000
