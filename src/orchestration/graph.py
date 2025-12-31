@@ -66,8 +66,8 @@ def _get_gemini_client():
 
 gemini_client = None  # Placeholder
 
-# System prompts
-SYSTEM_INSTRUCTIONS_QA = (
+# System prompts (Spanish and English versions)
+SYSTEM_INSTRUCTIONS_QA_ES = (
     "Eres el asistente multimodal de **NutriApp**, especializado en alimentación, nutrición práctica "
     "y análisis de contenido relacionado con comidas.\n\n"
     "Tipos de archivos que puedes recibir:\n"
@@ -87,6 +87,28 @@ SYSTEM_INSTRUCTIONS_QA = (
     "4) Cuando el usuario pida **ideas de recetas**, propone de 3 a 5 ideas sencillas.\n"
     "5) Sé prudente: **no des diagnósticos médicos ni tratamientos**.\n"
     "6) Si la pregunta NO está relacionada con nutrición, aclara tu función.\n"
+)
+
+SYSTEM_INSTRUCTIONS_QA_EN = (
+    "You are the multimodal assistant for **NutriApp**, specialized in nutrition, practical eating advice, "
+    "and analysis of food-related content.\n\n"
+    "Types of files you can receive:\n"
+    "- Photos of meals, lunch boxes, snacks, or beverages.\n"
+    "- Screenshots or PDFs of menus, meal plans, or recipes.\n"
+    "- Nutritional labels of packaged products.\n"
+    "- Simple reports related to weight, body measurements, or food diaries.\n\n"
+    "Your main goal is to help the person **better understand what they are eating** and provide "
+    "concrete ideas to improve their eating decisions, always in a clear and realistic way.\n\n"
+    "Response instructions:\n"
+    "1) Respond ALWAYS in **English**.\n"
+    "2) Return ONLY **text in Markdown**, without code blocks (no ```), and no JSON.\n"
+    "3) Use this recommended structure:\n"
+    "   - **Direct answer**: 2–4 lines that clearly answer the question.\n"
+    "   - **Analysis / Nutritional explanation**: describe the main components.\n"
+    "   - **Recommendations or next steps**: suggest practical improvements.\n\n"
+    "4) When the user asks for **recipe ideas**, propose 3 to 5 simple options.\n"
+    "5) Be cautious: **do not provide medical diagnoses or treatments**.\n"
+    "6) If the question is NOT related to nutrition, clarify your function.\n"
 )
 
 
@@ -216,33 +238,61 @@ def upload_large_files(state: OrchestrationState) -> OrchestrationState:
 def enrich_system_prompt(state: OrchestrationState) -> OrchestrationState:
     """
     Nodo 4: Enriquece el prompt del sistema basado en tipos de análisis detectados
+    e idioma del usuario
     """
     start_time = time.time()
     state.add_log("enrich_system_prompt", "iniciado")
     
-    base_prompt = SYSTEM_INSTRUCTIONS_QA
+    # Detectar idioma de la pregunta
+    detected_lang = _detect_language(state.question)
+    state.language = detected_lang
+    
+    # Seleccionar prompt base según idioma detectado
+    base_prompt = SYSTEM_INSTRUCTIONS_QA_ES if detected_lang == "es" else SYSTEM_INSTRUCTIONS_QA_EN
     additional_context = ""
     
     if AnalysisType.RECIPE_SUGGESTION in state.detected_analysis_types:
-        additional_context += (
-            "\n\n[ÉNFASIS RECETAS] El usuario busca ideas de recetas. "
-            "Proporciona de 3-5 opciones con nombres en negrita, descripción breve y tipo de aporte nutricional."
-        )
+        if detected_lang == "es":
+            additional_context += (
+                "\n\n[ÉNFASIS RECETAS] El usuario busca ideas de recetas. "
+                "Proporciona de 3-5 opciones con nombres en negrita, descripción breve y tipo de aporte nutricional."
+            )
+        else:
+            additional_context += (
+                "\n\n[EMPHASIS RECIPES] The user is looking for recipe ideas. "
+                "Provide 3-5 options with names in bold, brief description, and type of nutritional contribution."
+            )
     
     if AnalysisType.PRODUCT_LABEL in state.detected_analysis_types:
-        additional_context += (
-            "\n\n[ÉNFASIS ETIQUETA] Estás analizando un etiqueta nutricional. "
-            "Interpreta valores clave (kcal, azúcar, grasas, proteína, sodio) y da recomendaciones."
-        )
+        if detected_lang == "es":
+            additional_context += (
+                "\n\n[ÉNFASIS ETIQUETA] Estás analizando un etiqueta nutricional. "
+                "Interpreta valores clave (kcal, azúcar, grasas, proteína, sodio) y da recomendaciones."
+            )
+        else:
+            additional_context += (
+                "\n\n[EMPHASIS LABEL] You are analyzing a nutritional label. "
+                "Interpret key values (kcal, sugar, fats, protein, sodium) and provide recommendations."
+            )
     
     if AnalysisType.MEAL_PLAN in state.detected_analysis_types:
-        additional_context += (
-            "\n\n[ÉNFASIS PLAN] El usuario solicita un plan de comidas o menú. "
-            "Sé práctico y realista, considerando equilibrio nutricional."
-        )
+        if detected_lang == "es":
+            additional_context += (
+                "\n\n[ÉNFASIS PLAN] El usuario solicita un plan de comidas o menú. "
+                "Sé práctico y realista, considerando equilibrio nutricional."
+            )
+        else:
+            additional_context += (
+                "\n\n[EMPHASIS PLAN] The user is requesting a meal plan or menu. "
+                "Be practical and realistic, considering nutritional balance."
+            )
     
     state.system_prompt = base_prompt + additional_context
-    state.add_log("enrich_system_prompt", "success", f"Prompt enriquecido con {len(state.detected_analysis_types)} análisis")
+    state.add_log(
+        "enrich_system_prompt",
+        "success",
+        f"Prompt enriquecido (idioma: {detected_lang}, análisis: {len(state.detected_analysis_types)})"
+    )
     state.processing_time_ms += (time.time() - start_time) * 1000
     return state
 
@@ -346,6 +396,46 @@ def cleanup_uploads(state: OrchestrationState) -> OrchestrationState:
 # ===========================
 # FUNCIONES AUXILIARES
 # ===========================
+
+def _detect_language(text: str) -> str:
+    """
+    Detecta si el texto está en español o inglés.
+    Retorna 'es' para español, 'en' para inglés.
+    """
+    if not text:
+        return "es"  # Default a español
+    
+    spanish_keywords = {
+        "el", "la", "de", "que", "es", "y", "en", "un", "una", "los", "las",
+        "por", "con", "para", "a", "se", "del", "al", "lo", "como", "más",
+        "cómo", "qué", "cuál", "cuáles", "dónde", "cuándo", "cuánto", "cuántos",
+        "receta", "nutrición", "caloría", "proteína", "carbohidrato", "grasa",
+        "comida", "plato", "dieta", "plan", "menú", "etiqueta", "hábito"
+    }
+    
+    english_keywords = {
+        "the", "a", "and", "is", "in", "of", "to", "for", "that", "it",
+        "with", "on", "as", "at", "be", "or", "by", "from", "this", "an",
+        "how", "what", "which", "where", "when", "why", "recipe", "nutrition",
+        "calorie", "protein", "carbohydrate", "fat", "meal", "diet", "plan",
+        "menu", "label", "habit"
+    }
+    
+    text_lower = text.lower()
+    words = set(text_lower.split())
+    
+    spanish_count = len(words & spanish_keywords)
+    english_count = len(words & english_keywords)
+    
+    # Si hay una diferencia clara, usar el idioma detectado
+    if spanish_count > english_count:
+        return "es"
+    elif english_count > spanish_count:
+        return "en"
+    
+    # Default a español si no hay diferencia clara
+    return "es"
+
 
 def _force_markdown(text: str) -> str:
     """Limpia fences de código y evita respuestas en JSON puro"""

@@ -54,6 +54,7 @@ class OrchestrationState:
     # Análisis y clasificación
     detected_analysis_types: List[AnalysisType] = field(default_factory=list)
     file_classifications: Dict[str, AnalysisType] = field(default_factory=dict)
+    language: str = "es"  # 'es' o 'en' - detectado automáticamente
     
     # Processing intermediate
     uploaded_file_ids: List[str] = field(default_factory=list)
@@ -91,6 +92,7 @@ class OrchestrationState:
         """Retorna un resumen del estado para debugging"""
         return {
             "question": self.question[:100] + "..." if len(self.question) > 100 else self.question,
+            "language": self.language,
             "media_count": len(self.media_files),
             "analysis_types": [at.value for at in self.detected_analysis_types],
             "validation_passed": self.validation_passed,
