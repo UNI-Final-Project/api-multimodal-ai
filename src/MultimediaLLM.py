@@ -14,7 +14,9 @@ from pathlib import Path
 # === .env ===
 try:
     from dotenv import load_dotenv
-    BASE_DIR = Path(__file__).resolve().parent
+    BASE_DIR = Path(__file__).resolve().parent.parent  # Sube a raíz
+    load_dotenv(BASE_DIR / "config" / ".env", override=False)
+    # Fallback: intenta raíz también
     load_dotenv(BASE_DIR / ".env", override=False)
 except Exception:
     pass
@@ -30,8 +32,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 
 # ==== LangGraph Orchestration ====
-from orchestration_graph import invoke_orchestration
-from orchestration_state import MediaFile, MediaType
+from orchestration.graph import invoke_orchestration
+from orchestration.state import MediaFile, MediaType
 
 # ==== Gemini SDK (nuevo con fallback al anterior) ====
 USING_NEW_SDK = False
