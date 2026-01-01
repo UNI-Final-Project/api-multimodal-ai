@@ -37,6 +37,23 @@ from typing import Dict
 from orchestration.graph import invoke_orchestration
 from orchestration.state import MediaFile, MediaType
 
+# ==== Supabase ====
+from supabase_client import (
+    get_user_profile,
+    get_user_metrics,
+    get_daily_nutrition,
+    get_today_nutrition,
+    get_conversation_history,
+    save_conversation_message,
+    clear_conversation_history,
+    UserMetrics,
+    DailyNutrition,
+    UserNutritionProfile,
+)
+
+# ==== Nutrition Chatbot ====
+from nutrition_chatbot import NutritionChatbot
+
 # ==== LangChain para JSON ====
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -357,6 +374,323 @@ async def analyze_meal(file: UploadFile = File(...)):
             ),
             metadata={"error": str(e)},
         )
+
+
+# ===========================
+# Supabase Nutrition Endpoints
+# ===========================
+
+@app.get("/user/{user_id}/profile", tags=["nutrition"])
+async def get_user_profile_endpoint(user_id: str):
+    """
+    Obtiene el perfil completo del usuario desde Supabase:
+    - Métricas personales (peso, altura, objetivos de nutrición)
+    - Últimos 30 días de registro de nutrición
+    
+    Args:
+        user_id: UUID del usuario
+    
+    Returns:
+        {
+            "ok": true,
+            "profile": {
+                "metrics": { ... },
+                "daily_nutrition": [ ... ]
+            },
+            "metadata": { ... }
+        }
+    """
+    try:
+        profile = await get_user_profile(user_id)
+        return {
+            "ok": True,
+            "profile": profile,
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
+@app.get("/user/{user_id}/metrics", tags=["nutrition"])
+async def get_user_metrics_endpoint(user_id: str):
+    """
+    Obtiene solo las métricas personales del usuario.
+    
+    Args:
+        user_id: UUID del usuario
+    
+    Returns:
+        {
+            "ok": true,
+            "metrics": { weight, height, calorie_goal, ... },
+            "metadata": { ... }
+        }
+    """
+    try:
+        metrics = await get_user_metrics(user_id)
+        if not metrics:
+            return {
+                "ok": False,
+                "error": f"User {user_id} not found",
+            }
+        return {
+            "ok": True,
+            "metrics": metrics,
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
+@app.get("/user/{user_id}/nutrition/history", tags=["nutrition"])
+async def get_nutrition_history(user_id: str, limit: int = 30):
+    """
+    Obtiene el historial de nutrición diaria del usuario (últimos N días).
+    
+    Args:
+        user_id: UUID del usuario
+        limit: Número máximo de días a retornar (default: 30)
+    
+    Returns:
+        {
+            "ok": true,
+            "daily_nutrition": [ ... ],
+            "metadata": { ... }
+        }
+    """
+    try:
+        daily_nutrition = await get_daily_nutrition(user_id, limit=limit)
+        return {
+            "ok": True,
+            "daily_nutrition": daily_nutrition,
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+                "count": len(daily_nutrition),
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
+@app.get("/user/{user_id}/nutrition/today", tags=["nutrition"])
+async def get_today_nutrition_endpoint(user_id: str, date: str):
+    """
+    Obtiene el registro de nutrición de un día específico.
+    
+    Args:
+        user_id: UUID del usuario
+        date: Fecha en formato YYYY-MM-DD
+    
+    Returns:
+        {
+            "ok": true,
+            "daily_nutrition": { ... },
+            "metadata": { ... }
+        }
+    """
+    try:
+        nutrition = await get_today_nutrition(user_id, date)
+        if not nutrition:
+            return {
+                "ok": False,
+                "error": f"No nutrition record found for {date}",
+            }
+        return {
+            "ok": True,
+            "daily_nutrition": nutrition,
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+                "date": date,
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
+# ===========================
+# Nutrition Chatbot Endpoint
+# ===========================
+
+class ChatRequest(BaseModel):
+    """Estructura de solicitud para el chatbot"""
+    message: str
+    user_name: Optional[str] = "Usuario"
+
+
+class ChatResponse(BaseModel):
+    """Estructura de respuesta del chatbot"""
+    ok: bool
+    response: str
+    metadata: Dict[str, Any] = {}
+
+
+@app.post("/chat/{user_id}", tags=["chatbot"], response_model=ChatResponse)
+async def nutrition_chatbot(user_id: str, request: ChatRequest):
+    """
+    Chatbot de recomendaciones nutricionales con memory y contexto del usuario.
+    
+    El chatbot:
+    - Recuerda el nombre del usuario
+    - Mantiene historial de conversación
+    - Recomienda comidas basado en objetivos nutricionales
+    - Sugiere alimentos para cumplir metas diarias
+    - Proporciona recomendaciones personalizadas
+    
+    Args:
+        user_id: UUID del usuario
+        request: {
+            "message": "Tu pregunta o solicitud",
+            "user_name": "Tu nombre (opcional)"
+        }
+    
+    Returns:
+        {
+            "ok": true,
+            "response": "Respuesta del chatbot",
+            "metadata": { ... }
+        }
+    """
+    try:
+        if not request.message.strip():
+            return ChatResponse(
+                ok=False,
+                response="El mensaje no puede estar vacío",
+            )
+        
+        # Crear instancia del chatbot
+        chatbot = NutritionChatbot(
+            user_id=user_id,
+            user_name=request.user_name or "Usuario",
+        )
+        
+        # Procesar mensaje
+        response_text, metadata = await chatbot.chat(request.message)
+        
+        return ChatResponse(
+            ok=True,
+            response=response_text,
+            metadata=metadata,
+        )
+    
+    except Exception as e:
+        print(f"[ERROR] nutrition_chatbot: {str(e)}")
+        return ChatResponse(
+            ok=False,
+            response=f"Error en el chatbot: {str(e)}",
+            metadata={"error": str(e)},
+        )
+
+
+@app.get("/chat/{user_id}/history", tags=["chatbot"])
+async def get_chat_history(user_id: str, limit: int = 50):
+    """
+    Obtiene el historial de conversación del usuario.
+    
+    Args:
+        user_id: UUID del usuario
+        limit: Número máximo de mensajes a retornar (default: 50)
+    
+    Returns:
+        {
+            "ok": true,
+            "history": [ ... ],
+            "metadata": { ... }
+        }
+    """
+    try:
+        history = await get_conversation_history(user_id, limit=limit)
+        return {
+            "ok": True,
+            "history": history,
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+                "message_count": len(history),
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
+@app.delete("/chat/{user_id}/history", tags=["chatbot"])
+async def clear_chat_history(user_id: str):
+    """
+    Limpia el historial de conversación del usuario.
+    
+    Args:
+        user_id: UUID del usuario
+    
+    Returns:
+        {
+            "ok": true,
+            "message": "Historial eliminado",
+            "metadata": { ... }
+        }
+    """
+    try:
+        await clear_conversation_history(user_id)
+        return {
+            "ok": True,
+            "message": "Historial de conversación eliminado",
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "metadata": {
+                "timestamp": time.time(),
+                "user_id": user_id,
+            }
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
 
