@@ -30,10 +30,18 @@ from fastapi import (
     HTTPException,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict
 
 # ==== LangGraph Orchestration ====
 from orchestration.graph import invoke_orchestration
 from orchestration.state import MediaFile, MediaType
+
+# ==== LangChain para JSON ====
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel as PydanticModel, Field
 
 # ==== Gemini SDK (nuevo con fallback al anterior) ====
 USING_NEW_SDK = False
@@ -64,6 +72,35 @@ else:
 # ============================
 # NOTA: Las instrucciones de sistema ahora se gestionan en el módulo de orquestación
 # para mejor mantenibilidad y adaptabilidad según tipo de análisis detectado.
+
+# ============================
+# Modelo para JsonOutputParser de LangChain
+# ============================
+class MealAnalysisModel(PydanticModel):
+    """Modelo estructurado para análisis de comida - SOLO VALORES NUTRICIONALES"""
+    calories: float = Field(description="Calorías totales en kcal")
+    protein_g: float = Field(description="Proteína en gramos")
+    carbs_g: float = Field(description="Carbohidratos en gramos")
+    fat_g: float = Field(description="Grasas en gramos")
+    fiber_g: float = Field(default=0, description="Fibra en gramos")
+    sugar_g: float = Field(default=0, description="Azúcar en gramos")
+    sodium_mg: float = Field(default=0, description="Sodio en miligramos")
+
+class MealNutrients(BaseModel):
+    """Estructura simplificada de nutrientes - SOLO LOS VALORES QUE NECESITAS"""
+    calories: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    fiber_g: float = 0
+    sugar_g: float = 0
+    sodium_mg: float = 0
+
+class MealAnalysisResponse(BaseModel):
+    """Respuesta de análisis de comida"""
+    ok: bool
+    nutrients: MealNutrients
+    metadata: Dict[str, Any] = {}
 
 # ==== FastAPI app ====
 app = FastAPI(
@@ -113,6 +150,78 @@ async def uploadfile_to_media_file(up: UploadFile) -> MediaFile:
         data=data,
         size_bytes=len(data),
     )
+
+# ===========================
+# Análisis directo con LangChain + JsonOutputParser
+# ===========================
+
+async def analyze_meal_direct(media_file: MediaFile) -> MealNutrients:
+    """
+    Analiza comida usando LangChain con JsonOutputParser.
+    Retorna SOLO los valores nutricionales - sin texto.
+    """
+    try:
+        # Usar LangChain con ChatGoogleGenerativeAI
+        llm = ChatGoogleGenerativeAI(
+            model=DEFAULT_MODEL,
+            temperature=0.0,
+            google_api_key=GOOGLE_API_KEY,
+        )
+        
+        # Parser JSON
+        parser = JsonOutputParser(pydantic_object=MealAnalysisModel)
+        
+        # Instrucciones de formato
+        format_instructions = parser.get_format_instructions()
+        
+        # Crear mensaje con imagen
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": (
+                        "Analiza esta imagen de comida y extrae SOLO estos valores nutricionales.\n"
+                        "Sé preciso con los números estimados basándote en el tamaño de las porciones.\n\n"
+                        f"{format_instructions}"
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{media_file.mime_type};base64,{__import__('base64').b64encode(media_file.data).decode('utf-8')}"
+                    },
+                },
+            ],
+        )
+        
+        # Invocar modelo
+        print("[DEBUG] Invocando LangChain ChatGoogleGenerativeAI...")
+        response = llm.invoke([message])
+        response_text = response.content
+        
+        print(f"[DEBUG] Respuesta: {response_text[:300]}")
+        
+        # Parsear JSON
+        parsed_data = parser.parse(response_text)
+        print("[DEBUG] ✓ JSON parseado correctamente")
+        
+        # Retornar solo los valores
+        return MealNutrients(
+            calories=float(parsed_data.get("calories", 0)),
+            protein_g=float(parsed_data.get("protein_g", 0)),
+            carbs_g=float(parsed_data.get("carbs_g", 0)),
+            fat_g=float(parsed_data.get("fat_g", 0)),
+            fiber_g=float(parsed_data.get("fiber_g", 0)),
+            sugar_g=float(parsed_data.get("sugar_g", 0)),
+            sodium_mg=float(parsed_data.get("sodium_mg", 0)),
+        )
+    
+    except Exception as e:
+        print(f"[DEBUG] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"Error: {str(e)}")
+
 
 # -------------------------------
 # Endpoints utilitarios
@@ -191,8 +300,63 @@ async def qa_multipart(
         }
 
 # -------------------------------
-# Main (uvicorn)
+# Meal Analysis endpoint (solo imagen, JSON estructurado)
 # -------------------------------
+@app.post("/analyze-meal", tags=["meal"], response_model=MealAnalysisResponse)
+async def analyze_meal(file: UploadFile = File(...)):
+    """
+    Analiza una comida desde una imagen y retorna nutrientes en JSON estructurado.
+    Usa Gemini SDK directamente (sin LangGraph) para obtener JSON puro.
+    
+    - `file`: una única imagen (JPG, PNG, etc.)
+    
+    Retorna estructura JSON con:
+    - `ok`: True si fue exitoso
+    - `nutrients`: Objeto con macronutrientes, calorías, etc.
+    - `metadata`: Información del procesamiento
+    """
+    try:
+        if not file:
+            raise HTTPException(status_code=400, detail="Se requiere una imagen")
+        
+        # Convertir UploadFile a MediaFile
+        media_file = await uploadfile_to_media_file(file)
+        
+        # Analizar directamente con Gemini SDK (sin LangGraph)
+        start_time = time.time()
+        nutrients = await analyze_meal_direct(media_file)
+        processing_time = (time.time() - start_time) * 1000
+        
+        metadata = {
+            "method": "direct_gemini_sdk",
+            "model": DEFAULT_MODEL,
+            "processing_time_ms": processing_time,
+        }
+        
+        return MealAnalysisResponse(
+            ok=True,
+            nutrients=nutrients,
+            metadata=metadata,
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        return MealAnalysisResponse(
+            ok=False,
+            nutrients=MealNutrients(
+                food_name="Error",
+                description=f"{type(e).__name__}: {e}",
+                calories=0,
+                protein_g=0,
+                carbs_g=0,
+                fat_g=0,
+                fiber_g=0,
+                sugar_g=0,
+                sodium_mg=0,
+            ),
+            metadata={"error": str(e)},
+        )
 if __name__ == "__main__":
     import uvicorn
 
