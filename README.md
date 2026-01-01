@@ -1,294 +1,303 @@
-# NutriApp QA Multimodal API v2.0
+# NutriApp - API de Análisis Nutricional Inteligente
 
-Orquestación de flujos multimodales con **LangGraph** + **FastAPI** + **Google Gemini**
+Asistente nutricional impulsado por IA que analiza imágenes de comida, proporciona recomendaciones personalizadas y mantiene un historial de conversación con memoria contextual.
 
-## 📁 Estructura del Proyecto
-
-```
-Proyecto IA food/
-│
-├── 📂 src/                          Código fuente principal
-│   ├── MultimediaLLM.py            FastAPI application
-│   ├── __init__.py
-│   └── 📂 orchestration/           Módulo de orquestación
-│       ├── __init__.py
-│       ├── state.py                Definiciones de estado
-│       ├── graph.py                Grafo compilado (6 nodos)
-│       └── config.py               Configuración centralizada
-│
-├── 📂 docs/                        Documentación
-│   ├── BIENVENIDA.txt
-│   ├── INICIO_RAPIDO.md
-│   ├── README_LANGGRAPH.md
-│   ├── ORCHESTRATION.md
-│   ├── ESTRUCTURA.md
-│   ├── INDICE.md
-│   ├── RESUMEN_EJECUTIVO.txt
-│   ├── IMPLEMENTACION_COMPLETA.txt
-│   └── README_IMPLEMENTACION.txt
-│
-├── 📂 tests/                       Tests y ejemplos
-│   └── examples_and_tests.py       6 tests unitarios + 4 ejemplos
-│
-├── 📂 scripts/                     Scripts de utilidad
-│   └── verify_implementation.py    Verificación de setup
-│
-├── 📂 config/                      Configuración del proyecto
-│   ├── .env                        Variables de entorno
-│   └── requirements.txt            Dependencias Python
-│
-├── 📂 deployment/                  Archivos de deployment
-│   ├── Dockerfile
-│   └── gcp-ia-food-api.yaml
-│
-└── ⚙️ Archivos de raíz (LEGACY, mirar en carpetas respectivas)
-    ├── .git/
-    ├── .venv/
-    ├── .gitignore
-    └── .dockerignore
-```
+**Stack:** FastAPI • Google Gemini 2.5 Flash • LangChain • LangGraph • Supabase
 
 ---
 
-## 🚀 Inicio Rápido
+## 📋 Tabla de Contenidos
 
-### 1️⃣ Instalación (2 min)
+- [Quick Start](#-quick-start)
+- [Endpoints](#-endpoints)
+- [Características](#-características)
+- [Documentación](#-documentación)
+- [Arquitectura](#-arquitectura)
+- [Configuración](#-configuración)
+- [Seguridad](#-seguridad)
 
+---
+
+## 🚀 Quick Start
+
+### 1. Instalación
 ```bash
-# Instalar dependencias
-pip install -r config/requirements.txt
+git clone <repo>
+cd "Proyecto IA food"
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### 2️⃣ Configuración (2 min)
-
-```bash
-# Editar config/.env
-GOOGLE_API_KEY=sk-...
+### 2. Configurar Variables de Ambiente
+Crear archivo `config/.env`:
+```env
+GOOGLE_API_KEY=your_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
-PORT=8080
+NEXT_PUBLIC_SUPABASE_NUTRITION_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_NUTRITION_ANON_KEY=your_anon_key_here
+PORT=8000
 ```
 
-### 3️⃣ Ejecutar (2 min)
+### 3. Configurar Supabase
+Ejecutar estos SQL en la consola de Supabase:
+```sql
+-- user_metrics
+CREATE TABLE user_metrics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT UNIQUE NOT NULL,
+  weight FLOAT, height FLOAT,
+  calorie_goal FLOAT, protein_goal FLOAT,
+  carbs_goal FLOAT, fat_goal FLOAT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- daily_nutrition
+CREATE TABLE daily_nutrition (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL, date DATE NOT NULL,
+  calories FLOAT DEFAULT 0, protein FLOAT DEFAULT 0,
+  carbs FLOAT DEFAULT 0, fat FLOAT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, date)
+);
+
+-- conversation_history
+CREATE TABLE conversation_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  message_type TEXT NOT NULL, content TEXT NOT NULL,
+  timestamp TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 4. Ejecutar
+```bash
+python main.py
+```
+Acceder a `http://localhost:8000/docs` para Swagger UI
+
+---
+
+## 📡 Endpoints
+
+### 🖼️ Análisis de Imagen
+**POST** `/analyze-meal`
+- Analiza imagen de comida → JSON con nutrientes
+- **Request:** `multipart/form-data` con imagen
+- **Response:** `{ok, nutrients, metadata}`
 
 ```bash
-# Ejecutar servidor
-python src/MultimediaLLM.py
+curl -X POST "http://localhost:8000/analyze-meal" \
+  -F "file=@meal.jpg"
 ```
 
-### 4️⃣ Probar (2 min)
+### 👤 Usuario
+| Endpoint | Método | Descripción |
+|----------|--------|------------|
+| `/user/{user_id}/profile` | GET | Perfil + métricas + nutrición |
+| `/user/{user_id}/metrics` | GET | Solo métricas personales |
+| `/user/{user_id}/nutrition/history` | GET | Historial de nutrición |
+| `/user/{user_id}/nutrition/today` | GET | Nutrición de un día |
 
+### 🤖 Chatbot
+| Endpoint | Método | Descripción |
+|----------|--------|------------|
+| `/chat/{user_id}` | POST | Enviar mensaje al chatbot |
+| `/chat/{user_id}/history` | GET | Ver historial de conversación |
+| `/chat/{user_id}/history` | DELETE | Limpiar historial |
+
+**Ejemplo POST /chat:**
 ```bash
-# Acceder a API docs
-http://localhost:8080/docs
+curl -X POST "http://localhost:8000/chat/user-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Acabo de comer 450 calorías",
+    "user_name": "Juan"
+  }'
 ```
+
+### 📊 QA Multimodal
+**POST** `/qa`
+- Analiza múltiples archivos (PDF, imágenes, audio)
+- **Request:** `multipart/form-data` con pregunta y archivos
+
+---
+
+## ✨ Características
+
+✅ **Análisis Inteligente de Imágenes**
+- Extracción automática de nutrientes usando Gemini 2.5 Flash
+- Soporte para JPEG, PNG, GIF, WebP
+- JSON estructurado con calorías, macronutrientes, fibra, sodio
+
+✅ **Chatbot Personalizado**
+- Recomendaciones basadas en metas y consumo actual
+- Memoria de conversación persistente en Supabase
+- Contexto: peso, altura, metas, consumo del día
+
+✅ **Bilingüe** 
+- Detección automática: Español/Inglés
+- Respuestas en idioma del usuario
+- Dual system prompts para cada idioma
+
+✅ **Integración Supabase**
+- Persistencia de métricas personales
+- Historial de nutrición diaria
+- Memoria de conversaciones
+
+✅ **LangGraph Orchestration**
+- Workflows automáticos para QA
+- Procesamiento paralelo de idiomas
+- Validación de inputs
 
 ---
 
 ## 📚 Documentación
 
-| Documento | Tiempo | Propósito |
-|-----------|--------|----------|
-| `docs/BIENVENIDA.txt` | 2 min | Resumen visual |
-| `docs/INICIO_RAPIDO.md` | 10 min | Primeros pasos |
-| `docs/README_LANGGRAPH.md` | 5 min | Guía rápida |
-| `docs/ORCHESTRATION.md` | 15 min | Documentación técnica |
-| `docs/ESTRUCTURA.md` | 10 min | Diagramas y flujos |
-| `docs/INDICE.md` | 5 min | Índice de navegación |
+Documentación detallada disponible en `docs/`:
+
+| Documento | Contenido |
+|-----------|----------|
+| [API_REFERENCE.md](docs/API_REFERENCE.md) | Referencia completa de endpoints con ejemplos |
+| [SETUP.md](docs/SETUP.md) | Guía paso a paso: instalación, configuración, troubleshooting |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagramas, flujos, modelos de datos, componentes |
 
 ---
 
-## 🎯 Estructura del Código
+## 🏗️ Arquitectura
 
-### `src/orchestration/`
-
-```python
-# state.py
-- MediaType enum           Tipos de medios (IMAGE, PDF, AUDIO, etc)
-- AnalysisType enum       Tipos de análisis (NUTRITIONAL, RECIPE, etc)
-- MediaFile dataclass     Archivo multimedia
-- OrchestrationState      Estado centralizado del flujo
-
-# graph.py
-- validate_input()        Nodo 1: Validación
-- classify_media()        Nodo 2: Clasificación
-- upload_large_files()    Nodo 3: Upload Files API
-- enrich_system_prompt()  Nodo 4: Enriquecimiento
-- generate_answer()       Nodo 5: Generación
-- cleanup_uploads()       Nodo 6: Limpieza
-- build_orchestration_graph()   Construcción del grafo
-- invoke_orchestration()        Entry point
-
-# config.py
-- ValidationConfig        Límites de validación
-- GenerationConfig        Parámetros de generación
-- FilesAPIConfig          Configuración Files API
-- OrchestrationConfig     Configuración global
+```
+Frontend (Next.js)
+    ↓ HTTP/REST
+┌─────────────────────┐
+│  FastAPI           │
+│  ├─ Endpoints      │
+│  └─ Router         │
+├─────────────────────┤
+│  Lógica de Negocio  │
+│  ├─ NutritionChatbot│
+│  ├─ LangChain       │
+│  └─ LangGraph       │
+├─────────────────────┤
+│  Integraciones      │
+│  ├─ Gemini API      │
+│  └─ Supabase        │
+└─────────────────────┘
 ```
 
-### `src/MultimediaLLM.py`
+**Componentes Clave:**
+- `main.py` - Punto de entrada (uvicorn server)
+- `src/nutrition_api.py` - Endpoints FastAPI
+- `src/nutrition_chatbot.py` - Lógica de chatbot con LangChain
+- `src/supabase_client.py` - Cliente de Supabase + modelos
+- `src/orchestration/` - LangGraph para QA multimodal
 
-```python
-# FastAPI application
-@app.get("/health")      Health check
-@app.get("/env-check")   Verificar variables
-@app.post("/qa")         Endpoint principal (integración con orchestration)
-
-# Helper functions
-uploadfile_to_media_file()    Conversión de archivos
+**Stack Técnico:**
+```
+Python 3.9+ • FastAPI • Uvicorn
+Google Generative AI (Gemini 2.5 Flash)
+LangChain • LangGraph
+Supabase (PostgreSQL)
+Pydantic • python-dotenv • httpx
 ```
 
 ---
 
-## 🧪 Testing
+## 🔧 Configuración
 
-```bash
-# Tests unitarios
-python tests/examples_and_tests.py --tests
+### Variables de Ambiente Requeridas
+| Variable | Tipo | Descripción | Ejemplo |
+|----------|------|------------|---------|
+| `GOOGLE_API_KEY` | string | Clave API de Google | `AIzaSy...` |
+| `GEMINI_MODEL` | string | Modelo Gemini | `gemini-2.5-flash` |
+| `NEXT_PUBLIC_SUPABASE_NUTRITION_URL` | URL | URL del proyecto | `https://xxx.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_NUTRITION_ANON_KEY` | string | Clave pública | `eyJhbG...` |
+| `PORT` | number | Puerto del servidor | `8000` |
 
-# Ejemplos completos
-python tests/examples_and_tests.py --examples
+Ver [SETUP.md](docs/SETUP.md) para instrucciones detalladas.
 
-# Verificar setup
-python scripts/verify_implementation.py
-```
+---
+
+## 🔐 Seguridad
+
+- ✅ **Secretos en Ambiente**: API keys y credenciales en `config/.env` (nunca en git)
+- ✅ **CORS Configurado**: FastAPI CORS middleware
+- ✅ **Supabase RLS**: Row-Level Security (opcional, recomendado para producción)
+- ✅ **HTTPS**: Usar reverse proxy (nginx) en producción
+- ✅ **Rate Limiting**: Implementar en producción
+- ✅ **JWT Tokens**: Estructura lista para implementación
 
 ---
 
 ## 📦 Dependencias
 
 ```
-langgraph==0.2.52              Compilación de grafos
-langchain==0.3.0               Framework LLM
-langchain-google-genai==1.0.7  Google Gemini
-fastapi==0.121.2               Web framework
-google-genai==1.50.1           Gemini SDK nuevo
-google-generativeai==0.8.5     Gemini SDK viejo (fallback)
-```
-
-Ver `config/requirements.txt` para lista completa.
-
----
-
-## 🎯 Flujo de Orquestación
-
-```
-POST /qa (question + files)
-    ↓
-[validate_input] Validar entrada
-    ↓
-[classify_media] Clasificar tipos de análisis
-    ↓
-[upload_large_files] Subir archivos >20MB a Files API
-    ↓
-[enrich_system_prompt] Enriquecer prompt según análisis
-    ↓
-[generate_answer] Generar respuesta con Gemini
-    ↓
-[cleanup_uploads] Limpiar archivos subidos
-    ↓
-{ok, answer, metadata}
+fastapi>=0.104.1          # Web framework
+uvicorn>=0.24.0           # ASGI server
+google-generativeai>=0.5.0 # Gemini API
+langchain>=0.1.0          # LLM orchestration
+langgraph>=0.0.20         # Graph workflows
+supabase>=2.0.0           # Database client
+python-dotenv>=1.0.0      # Env variables
+httpx>=0.28.1,<0.29       # HTTP client
+pydantic>=2.0.0           # Data validation
 ```
 
 ---
 
-## ⚙️ Configuración
+## 💻 Desarrollo
 
-### Variables de Entorno (`config/.env`)
+```bash
+# Formatear código
+black src/ main.py
 
-```env
-# Obligatorio
-GOOGLE_API_KEY=sk-...
+# Lint
+flake8 src/ main.py --max-line-length=100
 
-# Opcional
-GEMINI_MODEL=gemini-2.5-flash
-PORT=8080
-ENVIRONMENT=development  # development, staging, production
-```
+# Tests
+pytest tests/ -v
 
-### Parámetros (`src/orchestration/config.py`)
-
-```python
-# Validación
-MAX_TOTAL_FILE_SIZE = 500MB
-MAX_SINGLE_FILE_SIZE = 50MB
-MAX_FILES_COUNT = 10
-
-# Generación
-DEFAULT_TEMPERATURE = 0.2
-GENERATION_TIMEOUT_SECONDS = 60
-
-# Files API
-SIZE_THRESHOLD = 20MB
-AUTO_CLEANUP = True
+# Debug mode
+uvicorn src.nutrition_api:app --reload --log-level debug
 ```
 
 ---
 
 ## 🚢 Deployment
 
+### Docker
 ```bash
-# Docker
-docker build -t nutriapp deployment/
-docker run -e GOOGLE_API_KEY=sk-... nutriapp
+docker build -t nutriapp .
+docker run -p 8000:8000 --env-file config/.env nutriapp
+```
 
-# GCP (Cloud Run)
-cat deployment/gcp-ia-food-api.yaml
+### Google Cloud Run
+```bash
+gcloud run deploy nutriapp --source . \
+  --platform managed --region us-central1 \
+  --set-env-vars GOOGLE_API_KEY=$GOOGLE_API_KEY
 ```
 
 ---
 
-## 📊 Respuesta Típica
+## 📊 Performance
 
-```json
-{
-  "ok": true,
-  "answer": "# Análisis del plato\n\nSí, es equilibrado...",
-  "metadata": {
-    "analysis_types": ["nutritional"],
-    "processing_time_ms": 2345.67,
-    "execution_logs": [
-      {"step": "validate_input", "status": "success"},
-      {"step": "classify_media", "status": "success"},
-      {"step": "generate_answer", "status": "success"}
-    ]
-  }
-}
-```
+| Operación | Tiempo Típico |
+|-----------|---------------|
+| Análisis de imagen | 2-3 segundos |
+| Respuesta del chatbot | 1-2 segundos |
+| Query Supabase | 100-300ms |
 
 ---
 
-## ✅ Checklist Inicial
+## 📝 Licencia
 
-- [ ] `pip install -r config/requirements.txt`
-- [ ] Configurar `config/.env` con GOOGLE_API_KEY
-- [ ] `python src/MultimediaLLM.py`
-- [ ] Acceder a `http://localhost:8080/docs`
-- [ ] Leer `docs/INICIO_RAPIDO.md`
+Privado - Proyecto IA Food 2026
 
 ---
 
-## 🔗 Recursos
-
-| Recurso | Ubicación |
-|---------|-----------|
-| API Documentation | `http://localhost:8080/docs` |
-| Guía Rápida | `docs/INICIO_RAPIDO.md` |
-| Arquitectura | `docs/ORCHESTRATION.md` |
-| Código | `src/orchestration/` |
-| Tests | `tests/examples_and_tests.py` |
-| Config | `config/` |
-
----
-
-## 📞 Soporte
-
-1. Lee `docs/INICIO_RAPIDO.md` para primeros pasos
-2. Consulta `docs/INDICE.md` para navegar documentación
-3. Ejecuta `python scripts/verify_implementation.py` para diagnóstico
-4. Revisa `execution_logs` en respuestas JSON para debugging
-
----
-
-**Versión:** 2.0.0  
-**Estado:** ✅ Listo para Producción  
-**Última actualización:** Diciembre 2025
+**Última actualización:** 2026-01-01 | **Estado:** ✅ Production Ready
