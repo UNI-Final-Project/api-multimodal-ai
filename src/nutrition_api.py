@@ -246,11 +246,15 @@ async def analyze_meal_direct(media_file: MediaFile) -> MealNutrients:
 @app.get("/env-check", tags=["health"])
 def env_check():
     """
-    Confirma carga de variables (.env)
+    ⚠️ SECURITY: Returns only loaded status, NEVER actual secret values.
     """
     return {
+        "status": "ok",
         "google_api_key_loaded": bool(os.environ.get("GOOGLE_API_KEY")),
-        "model": os.environ.get("GEMINI_MODEL", DEFAULT_MODEL),
+        "gemini_model_loaded": bool(os.environ.get("GEMINI_MODEL")),
+        "supabase_url_loaded": bool(os.environ.get("NEXT_PUBLIC_SUPABASE_NUTRITION_URL")),
+        "supabase_key_loaded": bool(os.environ.get("NEXT_PUBLIC_SUPABASE_NUTRITION_ANON_KEY")),
+        "warning": "Actual secrets are never exposed via API"
     }
 
 @app.get("/health", tags=["health"])
