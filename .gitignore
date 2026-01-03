@@ -4,3 +4,9 @@ venv/
 env/
 ENV/
 .env
+
+# Local config directory (do not commit secret values)
+config/.env
+
+# Cloud Run documentation with secrets
+deployment/README_CLOUD_RUN.md
